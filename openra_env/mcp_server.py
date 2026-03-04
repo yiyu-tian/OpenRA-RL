@@ -12,9 +12,10 @@ Works with OpenClaw, Claude Desktop, and any MCP client.
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 logger = logging.getLogger("openra-rl-mcp")
 
@@ -102,7 +103,9 @@ def _format(result: Any) -> str:
 # ── Game Lifecycle ─────────────────────────────────────────────────
 
 @mcp.tool()
-async def start_game(difficulty: str = "normal") -> str:
+async def start_game(
+    difficulty: Annotated[str, Field(description="AI difficulty: 'easy', 'normal', or 'hard'")] = "normal",
+) -> str:
     """Start a new Red Alert game. Returns initial game state."""
     global _game_started
     _game_started = False
@@ -118,8 +121,10 @@ async def get_game_state() -> str:
 
 
 @mcp.tool()
-async def advance(ticks: int = 50) -> str:
-    """Advance the game by N ticks (~25 ticks = 1 second).
+async def advance(
+    ticks: Annotated[int, Field(description="Number of game ticks to advance (~25 ticks = 1 game-second). Range 1-500. Use 100-200 for movement, 300-750 for building construction.")] = 50,
+) -> str:
+    """Advance the game by N ticks at accelerated speed (~25 ticks = 1 game-second).
     Production, movement, combat, and auto-placement all require game time.
     Also triggers auto-placement of buildings queued via build_and_place().
     Typical build times: power plant ~300 ticks, barracks ~500, war factory ~750."""
@@ -173,25 +178,33 @@ async def get_exploration_status() -> str:
 # ── Knowledge ──────────────────────────────────────────────────────
 
 @mcp.tool()
-async def lookup_unit(unit_type: str) -> str:
+async def lookup_unit(
+    unit_type: Annotated[str, Field(description="Unit type code, e.g. 'e1' (rifle infantry), 'e2' (grenadier), '3tnk' (heavy tank), 'dog' (attack dog)")],
+) -> str:
     """Look up stats for a unit type (e.g. 'e1', '3tnk')."""
     return _format(await _call("lookup_unit", unit_type=unit_type))
 
 
 @mcp.tool()
-async def lookup_building(building_type: str) -> str:
+async def lookup_building(
+    building_type: Annotated[str, Field(description="Building type code, e.g. 'powr' (power plant), 'barr' (barracks), 'weap' (war factory), 'tent' (allied barracks)")],
+) -> str:
     """Look up stats for a building type (e.g. 'powr', 'weap')."""
     return _format(await _call("lookup_building", building_type=building_type))
 
 
 @mcp.tool()
-async def lookup_tech_tree(faction: str = "soviet") -> str:
+async def lookup_tech_tree(
+    faction: Annotated[str, Field(description="Faction name: 'soviet' or 'allied'")] = "soviet",
+) -> str:
     """Get full tech tree and build order for a faction ('allied' or 'soviet')."""
     return _format(await _call("lookup_tech_tree", faction=faction))
 
 
 @mcp.tool()
-async def lookup_faction(faction: str) -> str:
+async def lookup_faction(
+    faction: Annotated[str, Field(description="Faction name: 'soviet' or 'allied'")],
+) -> str:
     """Get all available units and buildings for a faction."""
     return _format(await _call("lookup_faction", faction=faction))
 
@@ -209,7 +222,9 @@ async def get_map_analysis() -> str:
 
 
 @mcp.tool()
-async def batch_lookup(queries: list[dict]) -> str:
+async def batch_lookup(
+    queries: Annotated[list[dict], Field(description="List of lookup queries, each with 'type' ('unit' or 'building') and 'name' (type code). Example: [{\"type\":\"unit\",\"name\":\"3tnk\"}, {\"type\":\"building\",\"name\":\"weap\"}]")],
+) -> str:
     """Batch multiple lookups. Example: [{"type":"unit","name":"3tnk"}, {"type":"building","name":"weap"}]"""
     return _format(await _call("batch_lookup", queries=queries))
 
@@ -229,7 +244,9 @@ async def start_planning_phase() -> str:
 
 
 @mcp.tool()
-async def end_planning_phase(strategy: str = "") -> str:
+async def end_planning_phase(
+    strategy: Annotated[str, Field(description="Your chosen strategy summary (free text). Logged for analysis.")] = "",
+) -> str:
     """End planning phase with your strategy. Begins gameplay."""
     return _format(await _call("end_planning_phase", strategy=strategy))
 
@@ -243,25 +260,41 @@ async def get_planning_status() -> str:
 # ── Movement ───────────────────────────────────────────────────────
 
 @mcp.tool()
-async def move_units(unit_ids: str, target_x: int, target_y: int, queued: bool = False) -> str:
-    """Move units to a position. unit_ids: comma-separated IDs, 'all_combat', 'type:e1', etc."""
+async def move_units(
+    unit_ids: Annotated[str, Field(description="Comma-separated unit IDs (e.g. 'u1,u2'), or selectors: 'all_combat', 'all_idle', 'all_infantry', 'all_vehicles', 'type:e1' (all units of type)")],
+    target_x: Annotated[int, Field(description="Target cell X coordinate (0 to map_width)")],
+    target_y: Annotated[int, Field(description="Target cell Y coordinate (0 to map_height)")],
+    queued: Annotated[bool, Field(description="If true, queue after current orders; if false, replace current orders")] = False,
+) -> str:
+    """Move units to a position. Units will path-find to the target cell."""
     return _format(await _call("move_units", unit_ids=unit_ids, target_x=target_x, target_y=target_y, queued=queued))
 
 
 @mcp.tool()
-async def attack_move(unit_ids: str, target_x: int, target_y: int, queued: bool = False) -> str:
-    """Move units, engaging enemies en route. Best for advancing your army."""
+async def attack_move(
+    unit_ids: Annotated[str, Field(description="Comma-separated unit IDs (e.g. 'u1,u2'), or selectors: 'all_combat', 'all_idle', 'all_infantry', 'all_vehicles', 'type:e1'")],
+    target_x: Annotated[int, Field(description="Target cell X coordinate (0 to map_width)")],
+    target_y: Annotated[int, Field(description="Target cell Y coordinate (0 to map_height)")],
+    queued: Annotated[bool, Field(description="If true, queue after current orders; if false, replace current orders")] = False,
+) -> str:
+    """Move units toward a position, automatically engaging any enemies encountered en route."""
     return _format(await _call("attack_move", unit_ids=unit_ids, target_x=target_x, target_y=target_y, queued=queued))
 
 
 @mcp.tool()
-async def attack_target(unit_ids: str, target_actor_id: int, queued: bool = False) -> str:
+async def attack_target(
+    unit_ids: Annotated[str, Field(description="Comma-separated unit IDs or selectors (e.g. 'all_combat', 'type:3tnk')")],
+    target_actor_id: Annotated[int, Field(description="Actor ID of the enemy unit or building to attack (from get_enemies)")],
+    queued: Annotated[bool, Field(description="If true, queue after current orders; if false, replace current orders")] = False,
+) -> str:
     """Order units to attack a specific enemy by actor ID."""
     return _format(await _call("attack_target", unit_ids=unit_ids, target_actor_id=target_actor_id, queued=queued))
 
 
 @mcp.tool()
-async def stop_units(unit_ids: str) -> str:
+async def stop_units(
+    unit_ids: Annotated[str, Field(description="Comma-separated unit IDs or selectors: 'all_combat', 'all_idle', 'all_infantry', 'all_vehicles', 'type:e1'")],
+) -> str:
     """Stop units from moving or attacking."""
     return _format(await _call("stop_units", unit_ids=unit_ids))
 
@@ -269,13 +302,18 @@ async def stop_units(unit_ids: str) -> str:
 # ── Production ─────────────────────────────────────────────────────
 
 @mcp.tool()
-async def build_unit(unit_type: str, count: int = 1) -> str:
+async def build_unit(
+    unit_type: Annotated[str, Field(description="Unit type code to train, e.g. 'e1' (rifle), 'e2' (grenadier), '3tnk' (heavy tank), 'v2rl' (V2 launcher)")],
+    count: Annotated[int, Field(description="Number of units to queue for production")] = 1,
+) -> str:
     """Train units. Requires the right production building (barracks, war factory)."""
     return _format(await _call("build_unit", unit_type=unit_type, count=count))
 
 
 @mcp.tool()
-async def build_structure(building_type: str) -> str:
+async def build_structure(
+    building_type: Annotated[str, Field(description="Building type code, e.g. 'powr' (power plant), 'barr' (barracks), 'weap' (war factory), 'proc' (ore refinery)")],
+) -> str:
     """Start constructing a building (manual placement workflow).
     Call advance(ticks) to let construction finish, then place_building() to place it.
     Prefer build_and_place() which handles placement automatically."""
@@ -283,7 +321,11 @@ async def build_structure(building_type: str) -> str:
 
 
 @mcp.tool()
-async def build_and_place(building_type: str, cell_x: int = 0, cell_y: int = 0) -> str:
+async def build_and_place(
+    building_type: Annotated[str, Field(description="Building type code, e.g. 'powr', 'barr', 'weap', 'proc'")],
+    cell_x: Annotated[int, Field(description="Preferred placement X coordinate (0 = auto-find best position)")] = 0,
+    cell_y: Annotated[int, Field(description="Preferred placement Y coordinate (0 = auto-find best position)")] = 0,
+) -> str:
     """Build a structure and auto-place it when construction finishes.
     Call advance(ticks) after this to let construction complete — placement is automatic.
     Do NOT call place_building() on buildings queued this way."""
@@ -293,7 +335,11 @@ async def build_and_place(building_type: str, cell_x: int = 0, cell_y: int = 0) 
 # ── Building/Unit Actions ─────────────────────────────────────────
 
 @mcp.tool()
-async def place_building(building_type: str, cell_x: int = 0, cell_y: int = 0) -> str:
+async def place_building(
+    building_type: Annotated[str, Field(description="Building type code to place (must be fully constructed via build_structure)")],
+    cell_x: Annotated[int, Field(description="Placement X coordinate (0 = auto-find best position)")] = 0,
+    cell_y: Annotated[int, Field(description="Placement Y coordinate (0 = auto-find best position)")] = 0,
+) -> str:
     """Place a completed building on the map (only for build_structure workflow).
     Do NOT use on buildings queued via build_and_place() — those auto-place via advance().
     Cell coordinates are optional — engine auto-finds position if omitted."""
@@ -301,61 +347,88 @@ async def place_building(building_type: str, cell_x: int = 0, cell_y: int = 0) -
 
 
 @mcp.tool()
-async def cancel_production(item_type: str) -> str:
+async def cancel_production(
+    item_type: Annotated[str, Field(description="Type code of the unit or building to cancel (e.g. 'e1', 'powr')")],
+) -> str:
     """Cancel production of a unit or building type."""
     return _format(await _call("cancel_production", item_type=item_type))
 
 
 @mcp.tool()
-async def deploy_unit(unit_id: int) -> str:
+async def deploy_unit(
+    unit_id: Annotated[int, Field(description="Actor ID of the unit to deploy (e.g. MCV deploys into Construction Yard)")],
+) -> str:
     """Deploy a unit (e.g. MCV → Construction Yard)."""
     return _format(await _call("deploy_unit", unit_id=unit_id))
 
 
 @mcp.tool()
-async def sell_building(building_id: int) -> str:
+async def sell_building(
+    building_id: Annotated[int, Field(description="Actor ID of the building to sell (from get_buildings)")],
+) -> str:
     """Sell a building for partial refund."""
     return _format(await _call("sell_building", building_id=building_id))
 
 
 @mcp.tool()
-async def repair_building(building_id: int) -> str:
+async def repair_building(
+    building_id: Annotated[int, Field(description="Actor ID of the building to repair (from get_buildings)")],
+) -> str:
     """Toggle repair on a building."""
     return _format(await _call("repair_building", building_id=building_id))
 
 
 @mcp.tool()
-async def set_rally_point(building_id: int, cell_x: int, cell_y: int) -> str:
+async def set_rally_point(
+    building_id: Annotated[int, Field(description="Actor ID of the production building (from get_buildings)")],
+    cell_x: Annotated[int, Field(description="Rally point X coordinate")],
+    cell_y: Annotated[int, Field(description="Rally point Y coordinate")],
+) -> str:
     """Set rally point for a production building. New units go here automatically."""
     return _format(await _call("set_rally_point", building_id=building_id, cell_x=cell_x, cell_y=cell_y))
 
 
 @mcp.tool()
-async def guard_target(unit_ids: str, target_actor_id: int, queued: bool = False) -> str:
+async def guard_target(
+    unit_ids: Annotated[str, Field(description="Comma-separated unit IDs or selectors (e.g. 'all_combat', 'type:e1')")],
+    target_actor_id: Annotated[int, Field(description="Actor ID of the unit or building to guard")],
+    queued: Annotated[bool, Field(description="If true, queue after current orders; if false, replace current orders")] = False,
+) -> str:
     """Order units to guard a specific actor."""
     return _format(await _call("guard_target", unit_ids=unit_ids, target_actor_id=target_actor_id, queued=queued))
 
 
 @mcp.tool()
-async def set_stance(unit_ids: str, stance: str) -> str:
+async def set_stance(
+    unit_ids: Annotated[str, Field(description="Comma-separated unit IDs or selectors (e.g. 'all_combat', 'type:e1')")],
+    stance: Annotated[str, Field(description="Stance mode: 'holdfire', 'returnfire', 'defend', or 'attackanything'")],
+) -> str:
     """Set unit stance: 'holdfire', 'returnfire', 'defend', 'attackanything'."""
     return _format(await _call("set_stance", unit_ids=unit_ids, stance=stance))
 
 
 @mcp.tool()
-async def harvest(unit_id: int, cell_x: int = 0, cell_y: int = 0) -> str:
+async def harvest(
+    unit_id: Annotated[int, Field(description="Actor ID of the harvester unit")],
+    cell_x: Annotated[int, Field(description="Harvest location X coordinate (0 = auto-find nearest ore)")] = 0,
+    cell_y: Annotated[int, Field(description="Harvest location Y coordinate (0 = auto-find nearest ore)")] = 0,
+) -> str:
     """Send a harvester to harvest at a location."""
     return _format(await _call("harvest", unit_id=unit_id, cell_x=cell_x, cell_y=cell_y))
 
 
 @mcp.tool()
-async def power_down(building_id: int) -> str:
+async def power_down(
+    building_id: Annotated[int, Field(description="Actor ID of the building to toggle power on/off")],
+) -> str:
     """Toggle power on a building to save electricity."""
     return _format(await _call("power_down", building_id=building_id))
 
 
 @mcp.tool()
-async def set_primary(building_id: int) -> str:
+async def set_primary(
+    building_id: Annotated[int, Field(description="Actor ID of the building to set as primary production facility")],
+) -> str:
     """Set a building as the primary production facility."""
     return _format(await _call("set_primary", building_id=building_id))
 
@@ -363,7 +436,10 @@ async def set_primary(building_id: int) -> str:
 # ── Placement ──────────────────────────────────────────────────────
 
 @mcp.tool()
-async def get_valid_placements(building_type: str, max_results: int = 8) -> str:
+async def get_valid_placements(
+    building_type: Annotated[str, Field(description="Building type code to find placements for (e.g. 'powr', 'barr')")],
+    max_results: Annotated[int, Field(description="Maximum number of valid positions to return")] = 8,
+) -> str:
     """Get valid placement locations for a building type."""
     return _format(await _call("get_valid_placements", building_type=building_type, max_results=max_results))
 
@@ -371,13 +447,19 @@ async def get_valid_placements(building_type: str, max_results: int = 8) -> str:
 # ── Unit Groups ────────────────────────────────────────────────────
 
 @mcp.tool()
-async def assign_group(group_name: str, unit_ids: list[int]) -> str:
+async def assign_group(
+    group_name: Annotated[str, Field(description="Name for the unit group (e.g. 'scouts', 'main_army', 'defense')")],
+    unit_ids: Annotated[list[int], Field(description="List of unit actor IDs to assign to this group")],
+) -> str:
     """Create a named group of units."""
     return _format(await _call("assign_group", group_name=group_name, unit_ids=unit_ids))
 
 
 @mcp.tool()
-async def add_to_group(group_name: str, unit_ids: list[int]) -> str:
+async def add_to_group(
+    group_name: Annotated[str, Field(description="Name of an existing unit group")],
+    unit_ids: Annotated[list[int], Field(description="List of unit actor IDs to add to the group")],
+) -> str:
     """Add units to an existing group."""
     return _format(await _call("add_to_group", group_name=group_name, unit_ids=unit_ids))
 
@@ -390,12 +472,12 @@ async def get_groups() -> str:
 
 @mcp.tool()
 async def command_group(
-    group_name: str,
-    command_type: str,
-    target_x: int = 0,
-    target_y: int = 0,
-    target_actor_id: int = 0,
-    queued: bool = False,
+    group_name: Annotated[str, Field(description="Name of the unit group to command")],
+    command_type: Annotated[str, Field(description="Command: 'move', 'attack_move', 'attack', 'stop', or 'guard'")],
+    target_x: Annotated[int, Field(description="Target X coordinate (for move/attack_move)")] = 0,
+    target_y: Annotated[int, Field(description="Target Y coordinate (for move/attack_move)")] = 0,
+    target_actor_id: Annotated[int, Field(description="Target actor ID (for attack/guard commands)")] = 0,
+    queued: Annotated[bool, Field(description="If true, queue after current orders")] = False,
 ) -> str:
     """Issue a command to a unit group. command_type: move, attack_move, attack, stop, guard."""
     kwargs = dict(
@@ -409,14 +491,18 @@ async def command_group(
 # ── Compound ───────────────────────────────────────────────────────
 
 @mcp.tool()
-async def batch(actions: list[dict]) -> str:
+async def batch(
+    actions: Annotated[list[dict], Field(description="List of action dicts, each with 'tool' and tool-specific params. Example: [{\"tool\":\"build_unit\",\"unit_type\":\"e1\"}, {\"tool\":\"move_units\",\"unit_ids\":\"all_combat\",\"target_x\":50,\"target_y\":30}]")],
+) -> str:
     """Execute multiple actions simultaneously in one tick. Does NOT advance game time.
-    Cannot contain advance() or query tools. Example: [{"tool":"build_unit","unit_type":"e1"}]"""
+    Cannot contain advance() or query tools."""
     return _format(await _call("batch", actions=actions))
 
 
 @mcp.tool()
-async def plan(steps: list[dict]) -> str:
+async def plan(
+    steps: Annotated[list[dict], Field(description="List of step dicts, each with 'tool' and tool-specific params. Executed sequentially with state refresh between each.")],
+) -> str:
     """Execute steps sequentially with state refresh between each.
     Does NOT advance game time between steps — use advance() standalone for that."""
     return _format(await _call("plan", steps=steps))
@@ -439,7 +525,10 @@ async def surrender() -> str:
 # ── Terrain ────────────────────────────────────────────────────────
 
 @mcp.tool()
-async def get_terrain_at(cell_x: int, cell_y: int) -> str:
+async def get_terrain_at(
+    cell_x: Annotated[int, Field(description="Cell X coordinate to query")],
+    cell_y: Annotated[int, Field(description="Cell Y coordinate to query")],
+) -> str:
     """Get terrain type at a specific cell."""
     return _format(await _call("get_terrain_at", cell_x=cell_x, cell_y=cell_y))
 
