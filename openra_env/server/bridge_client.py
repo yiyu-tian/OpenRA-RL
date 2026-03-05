@@ -212,6 +212,7 @@ class BridgeClient:
         if self._session_call is None:
             raise RuntimeError("Session not started. Call start_session() first.")
 
+        n = max(1, min(n, 5000))
         target_tick = self._obs_tick + n
         action = rl_bridge_pb2.AgentAction(
             commands=[

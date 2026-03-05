@@ -138,7 +138,7 @@ ENV LIBGL_ALWAYS_SOFTWARE=1
 ENV MESA_GL_VERSION_OVERRIDE=3.3
 # Game configuration (override at runtime with -e)
 ENV AI_SLOT=Multi0
-ENV BOT_TYPE=normal
+ENV BOT_TYPE=beginner
 ENV RECORD_REPLAYS=true
 
 EXPOSE 8000

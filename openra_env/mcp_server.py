@@ -103,9 +103,7 @@ def _format(result: Any) -> str:
 # ── Game Lifecycle ─────────────────────────────────────────────────
 
 @mcp.tool()
-async def start_game(
-    difficulty: Annotated[str, Field(description="AI difficulty: 'easy', 'normal', or 'hard'")] = "normal",
-) -> str:
+async def start_game() -> str:
     """Start a new Red Alert game. Returns initial game state."""
     global _game_started
     _game_started = False
