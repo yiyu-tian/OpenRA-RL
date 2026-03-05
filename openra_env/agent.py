@@ -1142,18 +1142,29 @@ async def run_agent(config, verbose: bool = False):
             export_path.write_text(json.dumps(sub, indent=2))
             print(f"Bench export: {export_path}")
 
-            # Auto-upload to bench if enabled (skip when agent errors occurred)
+            # Upload to bench — prompt user after each game (issue #34)
             bench_url = config.agent.bench_url
-            if config.agent.bench_upload and bench_url:
+            bench_mode = config.agent.bench_upload  # True / False / "ask"
+            if bench_url and bench_mode is not False:
                 if not should_upload:
                     print(f"Skipping bench upload: {skip_reason}")
                 else:
-                    try:
-                        from openra_env.bench_submit import gradio_submit
-                        msg = gradio_submit(bench_url, sub, replay_path=replay.get("path", ""))
-                        print(f"Uploaded to bench: {msg}")
-                    except Exception as e:
-                        print(f"  (bench upload failed: {e})")
+                    do_upload = False
+                    if bench_mode == "ask" or bench_mode is True:
+                        try:
+                            answer = input("  Upload to leaderboard? [y/N] ").strip().lower()
+                            do_upload = answer in ("y", "yes")
+                        except (EOFError, KeyboardInterrupt):
+                            do_upload = False
+                    if do_upload:
+                        try:
+                            from openra_env.bench_submit import gradio_submit
+                            msg = gradio_submit(bench_url, sub, replay_path=replay.get("path", ""))
+                            print(f"Uploaded to bench: {msg}")
+                        except Exception as e:
+                            print(f"  (bench upload failed: {e})")
+                    else:
+                        print("  Skipped bench upload.")
         except Exception as e:
             print(f"  (bench export failed: {e})")
 
