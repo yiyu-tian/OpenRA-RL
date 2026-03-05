@@ -315,6 +315,24 @@ git submodule update --init --recursive
 
 ### 2. Install Python dependencies
 
+#### 2.1 Create a virtual environment
+
+Create and activate a dedicated environment (Python 3.10 recommended):
+
+**Conda:**
+```bash
+conda create --name openra python=3.10
+conda activate openra
+```
+
+**venv:**
+```bash
+python3.10 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+```
+
+#### 2.2 Install dependencies
+
 ```bash
 pip install -e ".[dev]"
 ```
