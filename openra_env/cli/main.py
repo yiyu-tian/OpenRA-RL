@@ -92,6 +92,40 @@ def main() -> None:
     replay_sub.add_parser("copy", help="Copy replays from Docker to ~/.openra-rl/replays/")
     replay_sub.add_parser("stop", help="Stop the replay viewer")
 
+    arena_parser = subparsers.add_parser("arena", help="Replay comparison and preference tools")
+    arena_sub = arena_parser.add_subparsers(dest="arena_command")
+
+    arena_compare = arena_sub.add_parser("compare", help="Compare two replays side by side")
+    arena_compare.add_argument("left", nargs="?", default=None, help="Run/replay ref (default: newest saved runs)")
+    arena_compare.add_argument("right", nargs="?", default=None, help="Run/replay ref (default: newest saved runs)")
+    arena_compare.add_argument("--port", type=int, default=8090, help="Arena UI port (default: 8090)")
+    arena_compare.add_argument("--left-port", type=int, default=6080, help="Left replay noVNC port (default: 6080)")
+    arena_compare.add_argument("--right-port", type=int, default=6081, help="Right replay noVNC port (default: 6081)")
+    arena_compare.add_argument(
+        "--resolution", default=None,
+        help="Replay viewer resolution WxH (default: 1280x960)",
+    )
+    arena_compare.add_argument(
+        "--render", dest="render_mode", choices=["auto", "gpu", "cpu"], default=None,
+        help="Render backend: auto tries GPU then CPU (default: auto)",
+    )
+    arena_compare.add_argument(
+        "--vnc-quality", type=int, default=None,
+        help="VNC quality 0-9, higher = sharper (default: 8)",
+    )
+    arena_compare.add_argument(
+        "--vnc-compression", type=int, default=None,
+        help="VNC compression 0-9, higher = smaller (default: 4)",
+    )
+    arena_compare.add_argument(
+        "--cpus", type=int, default=None,
+        help="CPU cores for software rendering (default: 4, 0 = all available).",
+    )
+
+    arena_export = arena_sub.add_parser("export", help="Export saved preference pairs as JSONL")
+    arena_export.add_argument("--output", default=None, help="Output JSONL path")
+    arena_sub.add_parser("stop", help="Stop both arena replay viewers")
+
     # ── bench ─────────────────────────────────────────────────────────
     bench_parser = subparsers.add_parser("bench", help="Benchmark leaderboard tools")
     bench_sub = bench_parser.add_subparsers(dest="bench_command")
@@ -181,6 +215,26 @@ def main() -> None:
             server_url=args.server_url,
             port=args.port,
         )
+    elif args.command == "arena":
+        if args.arena_command == "compare":
+            commands.cmd_arena_compare(
+                left=args.left,
+                right=args.right,
+                port=args.port,
+                left_port=args.left_port,
+                right_port=args.right_port,
+                resolution=args.resolution,
+                render_mode=args.render_mode,
+                vnc_quality=args.vnc_quality,
+                vnc_compression=args.vnc_compression,
+                cpu_cores=args.cpus,
+            )
+        elif args.arena_command == "export":
+            commands.cmd_arena_export(output=args.output)
+        elif args.arena_command == "stop":
+            commands.cmd_arena_stop()
+        else:
+            arena_parser.print_help()
     elif args.command == "bench":
         if args.bench_command == "submit":
             from openra_env.bench_submit import main as bench_submit_main

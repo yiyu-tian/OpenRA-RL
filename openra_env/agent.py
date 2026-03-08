@@ -10,8 +10,12 @@ import logging
 import time
 
 from collections import defaultdict
+from copy import deepcopy
+from pathlib import Path
+from typing import Any
 
 import httpx
+from openra_env.arena_data import new_run_id, sanitize_config_snapshot, save_run_artifact
 from openra_env.config import LLMConfig
 from openra_env.game_data import get_building_stats, get_faction_info, get_tech_tree, get_unit_stats
 from openra_env.mcp_ws_client import OpenRAMCPClient
@@ -435,6 +439,35 @@ def mcp_tools_to_openai(tools: list) -> list[dict]:
     return result
 
 
+def _trace_message(trace: list[dict[str, Any]], *, phase: str, turn: int, message: dict[str, Any]) -> None:
+    """Record a JSON-safe message trace entry independent of history compression."""
+    entry: dict[str, Any] = {
+        "phase": phase,
+        "turn": turn,
+        "role": message.get("role", ""),
+    }
+    if "content" in message and message.get("content") is not None:
+        entry["content"] = message.get("content")
+    if "tool_call_id" in message:
+        entry["tool_call_id"] = message.get("tool_call_id")
+    if "tool_calls" in message:
+        entry["tool_calls"] = deepcopy(message.get("tool_calls", []))
+    trace.append(entry)
+
+
+def _append_traced_message(
+    messages: list[dict[str, Any]],
+    trace: list[dict[str, Any]],
+    *,
+    phase: str,
+    turn: int,
+    message: dict[str, Any],
+) -> None:
+    """Append a message to chat history and the persisted trace."""
+    messages.append(message)
+    _trace_message(trace, phase=phase, turn=turn, message=message)
+
+
 def _sanitize_messages(messages: list[dict], prompts=None) -> list[dict]:
     """Merge consecutive same-role messages for strict-alternation models (e.g. Mistral).
 
@@ -673,6 +706,7 @@ async def run_agent(config, verbose: bool = False):
     llm_config = config.llm
     max_turns = config.agent.max_turns
     max_time = config.agent.max_time_s
+    run_id = new_run_id()
 
     # Auto-increase timeout for local models (they're slower than cloud APIs)
     is_local = any(h in llm_config.base_url for h in ("localhost", "127.0.0.1"))
@@ -713,6 +747,8 @@ async def run_agent(config, verbose: bool = False):
 
         # Initialize conversation
         system_prompt = load_system_prompt(config)
+        trace_messages: list[dict[str, Any]] = []
+        match_map_name = ""
 
         # ─── Cross-Episode Memory (ERL) ─────────────────────────────
         memory = None
@@ -736,6 +772,7 @@ async def run_agent(config, verbose: bool = False):
                 print("Memory: empty (first game)")
 
         messages = [{"role": "system", "content": system_prompt}]
+        _trace_message(trace_messages, phase="setup", turn=0, message=messages[0])
 
         # ─── Pre-Game Planning Phase ──────────────────────────────────
         planning_strategy = ""
@@ -748,6 +785,7 @@ async def run_agent(config, verbose: bool = False):
             if planning_data.get("planning_active"):
                 max_planning_turns = planning_data.get("max_turns", 10)
                 opponent_summary = planning_data.get("opponent_summary", "")
+                match_map_name = planning_data.get("map", {}).get("map_name", "")
 
                 prompts = config.prompts
                 planning_prompt = prompts.planning_prompt.format(
@@ -764,7 +802,13 @@ async def run_agent(config, verbose: bool = False):
                     opponent_summary=opponent_summary,
                     planning_nudge=prompts.planning_nudge,
                 )
-                messages.append({"role": "user", "content": planning_prompt})
+                _append_traced_message(
+                    messages,
+                    trace_messages,
+                    phase="planning",
+                    turn=0,
+                    message={"role": "user", "content": planning_prompt},
+                )
 
                 # Planning loop (bounded by max_planning_turns + margin)
                 planning_done = False
@@ -780,17 +824,29 @@ async def run_agent(config, verbose: bool = False):
 
                     choice = response["choices"][0]
                     assistant_msg = choice["message"]
-                    messages.append(assistant_msg)
+                    _append_traced_message(
+                        messages,
+                        trace_messages,
+                        phase="planning",
+                        turn=planning_turn + 1,
+                        message=assistant_msg,
+                    )
 
                     if verbose and assistant_msg.get("content"):
                         print(f"  [Planning] {assistant_msg['content'][:200]}")
 
                     tool_calls = assistant_msg.get("tool_calls", [])
                     if not tool_calls:
-                        messages.append({
-                            "role": "user",
-                            "content": prompts.planning_nudge,
-                        })
+                        _append_traced_message(
+                            messages,
+                            trace_messages,
+                            phase="planning",
+                            turn=planning_turn + 1,
+                            message={
+                                "role": "user",
+                                "content": prompts.planning_nudge,
+                            },
+                        )
                         continue
 
                     for tc in tool_calls:
@@ -811,11 +867,17 @@ async def run_agent(config, verbose: bool = False):
                         except Exception as e:
                             result = {"error": str(e)}
 
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "content": json.dumps(result) if not isinstance(result, str) else result,
-                        })
+                        _append_traced_message(
+                            messages,
+                            trace_messages,
+                            phase="planning",
+                            turn=planning_turn + 1,
+                            message={
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": json.dumps(result) if not isinstance(result, str) else result,
+                            },
+                        )
 
                         # Check if planning ended
                         if isinstance(result, dict):
@@ -840,6 +902,17 @@ async def run_agent(config, verbose: bool = False):
                             strategy="(planning timed out, no explicit strategy)"
                         )
                         planning_strategy = result.get("strategy", "")
+                        _append_traced_message(
+                            messages,
+                            trace_messages,
+                            phase="planning",
+                            turn=max_planning_turns + 1,
+                            message={
+                                "role": "tool",
+                                "tool_call_id": "forced-end-planning",
+                                "content": json.dumps(result) if not isinstance(result, str) else result,
+                            },
+                        )
                     except Exception:
                         pass
                     print("  Planning phase timed out, proceeding to gameplay.")
@@ -856,6 +929,7 @@ async def run_agent(config, verbose: bool = False):
         messages = [messages[0]]  # keep only system prompt
 
         state = await env.call_tool("get_game_state")
+        match_map_name = match_map_name or state.get("map", {}).get("map_name", "")
         briefing = compose_pregame_briefing(state)
 
         strategy_section = ""
@@ -874,15 +948,21 @@ async def run_agent(config, verbose: bool = False):
         mcv_note = f" Your MCV is unit {mcv_id}." if mcv_id else ""
 
         game_start_prompts = config.prompts
-        messages.append({
-            "role": "user",
-            "content": game_start_prompts.game_start.format(
-                strategy_section=strategy_section,
-                briefing=briefing,
-                barracks_type=barracks_type,
-                mcv_note=mcv_note,
-            ),
-        })
+        _append_traced_message(
+            messages,
+            trace_messages,
+            phase="gameplay",
+            turn=0,
+            message={
+                "role": "user",
+                "content": game_start_prompts.game_start.format(
+                    strategy_section=strategy_section,
+                    briefing=briefing,
+                    barracks_type=barracks_type,
+                    mcv_note=mcv_note,
+                ),
+            },
+        )
 
         total_tool_calls = 0
         total_api_calls = 0
@@ -925,7 +1005,13 @@ async def run_agent(config, verbose: bool = False):
                         event_tracker.update_from_state(briefing_state)
                     briefing = format_state_briefing(briefing_state)
                     if briefing:
-                        messages.append({"role": "user", "content": briefing})
+                        _append_traced_message(
+                            messages,
+                            trace_messages,
+                            phase="gameplay",
+                            turn=turn,
+                            message={"role": "user", "content": briefing},
+                        )
                         if verbose:
                             # Print just the alerts
                             for a in briefing_state.get("alerts", []):
@@ -958,10 +1044,16 @@ async def run_agent(config, verbose: bool = False):
                             "If the current approach is working, continue. "
                             "If not, state clearly what needs to change."
                         )
-                        messages.append({
-                            "role": "user",
-                            "content": _checkpoint_msg,
-                        })
+                        _append_traced_message(
+                            messages,
+                            trace_messages,
+                            phase="gameplay",
+                            turn=turn,
+                            message={
+                                "role": "user",
+                                "content": _checkpoint_msg,
+                            },
+                        )
                         _checkpoint_just_fired = True
                         if verbose:
                             print(f"\n  {'=' * 50}")
@@ -1010,7 +1102,13 @@ async def run_agent(config, verbose: bool = False):
             assistant_msg = choice["message"]
 
             # Add assistant response to history
-            messages.append(assistant_msg)
+            _append_traced_message(
+                messages,
+                trace_messages,
+                phase="gameplay",
+                turn=turn,
+                message=assistant_msg,
+            )
 
             # Print assistant's reasoning
             if assistant_msg.get("content") and verbose:
@@ -1030,10 +1128,16 @@ async def run_agent(config, verbose: bool = False):
                 if verbose:
                     content = assistant_msg.get("content", "(no content)")
                     print(f"  [LLM] No tool calls. Response: {content[:100]}")
-                messages.append({
-                    "role": "user",
-                    "content": config.prompts.no_tool_nudge,
-                })
+                _append_traced_message(
+                    messages,
+                    trace_messages,
+                    phase="gameplay",
+                    turn=turn,
+                    message={
+                        "role": "user",
+                        "content": config.prompts.no_tool_nudge,
+                    },
+                )
                 continue
 
             # Execute each tool call
@@ -1085,11 +1189,17 @@ async def run_agent(config, verbose: bool = False):
                 # Format result for message
                 result_str = json.dumps(result) if not isinstance(result, str) else result
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": result_str,
-                })
+                _append_traced_message(
+                    messages,
+                    trace_messages,
+                    phase="gameplay",
+                    turn=turn,
+                    message={
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": result_str,
+                    },
+                )
 
                 # Check for game over
                 if isinstance(result, dict) and result.get("done"):
@@ -1119,10 +1229,16 @@ async def run_agent(config, verbose: bool = False):
 
             # Check finish reason
             if choice.get("finish_reason") == "stop" and not tool_calls:
-                messages.append({
-                    "role": "user",
-                    "content": config.prompts.continue_nudge,
-                })
+                _append_traced_message(
+                    messages,
+                    trace_messages,
+                    phase="gameplay",
+                    turn=turn,
+                    message={
+                        "role": "user",
+                        "content": config.prompts.continue_nudge,
+                    },
+                )
 
         # Surrender so the replay has a proper ending
         if not game_done:
@@ -1140,6 +1256,9 @@ async def run_agent(config, verbose: bool = False):
         print(f"Time: {elapsed:.1f}s ({elapsed / max(total_api_calls, 1):.1f}s per API call)")
 
         # Get final state and scorecard
+        final = {}
+        mil = {}
+        eco = {}
         try:
             final = await env.call_tool("get_game_state")
             mil = final.get("military", {})
@@ -1173,10 +1292,12 @@ async def run_agent(config, verbose: bool = False):
 
         # Get replay
         replay = {}
+        replay_filename = ""
         try:
             replay = await env.call_tool("get_replay_path")
             if replay.get("path"):
                 print(f"Replay: {replay['path']}")
+                replay_filename = Path(replay["path"]).name
         except Exception:
             pass
 
@@ -1250,12 +1371,14 @@ async def run_agent(config, verbose: bool = False):
 
         # Auto-export bench submission JSON (always local, upload gated on errors)
         should_export, should_upload, skip_reason = _bench_export_policy(encountered_agent_error)
+        bench_export_path = ""
+        resolved_name = config.agent.agent_name or llm_config.model
         try:
             from datetime import datetime, timezone
             from pathlib import Path
 
-            resolved_name = config.agent.agent_name or llm_config.model
             sub = {
+                "run_id": run_id,
                 "agent_name": resolved_name,
                 "agent_type": config.agent.agent_type or "LLM",
                 "agent_url": config.agent.agent_url,
@@ -1283,6 +1406,7 @@ async def run_agent(config, verbose: bool = False):
             slug = resolved_name.replace("/", "_")[:40]
             export_path = export_dir / f"bench-{slug}-{ts}.json"
             export_path.write_text(json.dumps(sub, indent=2))
+            bench_export_path = str(export_path)
             print(f"Bench export: {export_path}")
 
             # Upload to bench — prompt user after each game (issue #34)
@@ -1310,5 +1434,73 @@ async def run_agent(config, verbose: bool = False):
                         print("  Skipped bench upload.")
         except Exception as e:
             print(f"  (bench export failed: {e})")
+
+        # Save a richer local run artifact for replay comparison / preference collection
+        try:
+            from pathlib import Path
+
+            image_version = ""
+            try:
+                from openra_env.cli.docker_manager import LOCAL_REPLAY_DIR, get_running_image_tag
+
+                image_version = get_running_image_tag() or ""
+                local_replay_candidate = LOCAL_REPLAY_DIR / replay_filename if replay_filename else None
+                local_replay_path = (
+                    str(local_replay_candidate)
+                    if local_replay_candidate is not None and local_replay_candidate.exists()
+                    else ""
+                )
+            except Exception:
+                local_replay_path = ""
+
+            summary = {
+                "result": final.get("result", ""),
+                "ticks": final.get("tick", 0),
+                "kills_cost": mil.get("kills_cost", 0),
+                "deaths_cost": mil.get("deaths_cost", 0),
+                "assets_value": mil.get("assets_value", 0),
+                "explored_percent": final.get("explored_percent", 0),
+                "reward_vector": final.get("reward_vector", {}),
+                "tool_calls": total_tool_calls,
+                "api_calls": total_api_calls,
+                "duration_s": round(elapsed, 2),
+            }
+            run_artifact = {
+                "schema_version": 1,
+                "run_id": run_id,
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "agent": {
+                    "name": resolved_name,
+                    "type": config.agent.agent_type or "LLM",
+                    "model": llm_config.model,
+                    "base_url": llm_config.base_url,
+                },
+                "match": {
+                    "map_name": match_map_name,
+                    "opponent": config.opponent.bot_type,
+                    "faction": final.get("faction", "") or state.get("faction", ""),
+                    "planning_enabled": bool(planning_status.get("planning_enabled", True)),
+                },
+                "planning": {
+                    "strategy": planning_strategy,
+                },
+                "replay": {
+                    "path": replay.get("path", ""),
+                    "filename": replay_filename,
+                    "local_path": local_replay_path,
+                },
+                "engine": {
+                    "image_version": image_version,
+                },
+                "summary": summary,
+                "events": event_tracker.summary() if event_tracker else [],
+                "messages": trace_messages,
+                "bench_export_path": bench_export_path,
+                "config": sanitize_config_snapshot(config),
+            }
+            saved_run = save_run_artifact(run_artifact)
+            print(f"Run artifact: {saved_run['path']}")
+        except Exception as e:
+            print(f"  (run artifact export failed: {e})")
 
         print("=" * 70)

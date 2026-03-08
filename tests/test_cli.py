@@ -506,6 +506,48 @@ class TestMain:
             main()
         mock_mcp.assert_called_once_with(server_url=None, port=9000)
 
+    @patch("openra_env.cli.commands.cmd_arena_compare")
+    def test_main_arena_compare_with_flags(self, mock_compare):
+        from openra_env.cli.main import main
+        with patch("sys.argv", [
+            "openra-rl", "arena", "compare", "left.json", "right.json",
+            "--port", "9001",
+            "--left-port", "6090",
+            "--right-port", "6091",
+            "--resolution", "1280x720",
+            "--render", "cpu",
+            "--vnc-quality", "9",
+            "--vnc-compression", "2",
+            "--cpus", "6",
+        ]):
+            main()
+        mock_compare.assert_called_once_with(
+            left="left.json",
+            right="right.json",
+            port=9001,
+            left_port=6090,
+            right_port=6091,
+            resolution="1280x720",
+            render_mode="cpu",
+            vnc_quality=9,
+            vnc_compression=2,
+            cpu_cores=6,
+        )
+
+    @patch("openra_env.cli.commands.cmd_arena_export")
+    def test_main_arena_export(self, mock_export):
+        from openra_env.cli.main import main
+        with patch("sys.argv", ["openra-rl", "arena", "export", "--output", "prefs.jsonl"]):
+            main()
+        mock_export.assert_called_once_with(output="prefs.jsonl")
+
+    @patch("openra_env.cli.commands.cmd_arena_stop")
+    def test_main_arena_stop(self, mock_stop):
+        from openra_env.cli.main import main
+        with patch("sys.argv", ["openra-rl", "arena", "stop"]):
+            main()
+        mock_stop.assert_called_once()
+
 
 # ── MCP Server ──────────────────────────────────────────────────────
 

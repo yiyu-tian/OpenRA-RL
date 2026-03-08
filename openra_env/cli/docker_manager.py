@@ -16,6 +16,8 @@ IMAGE_REPO = "ghcr.io/yxc20089/openra-rl"
 IMAGE = f"{IMAGE_REPO}:latest"
 CONTAINER_NAME = "openra-rl-server"
 REPLAY_CONTAINER = "openra-rl-replay"
+ARENA_LEFT_CONTAINER = "openra-rl-replay-a"
+ARENA_RIGHT_CONTAINER = "openra-rl-replay-b"
 REPLAY_DIR_IN_CONTAINER = "/root/.config/openra/Replays/ra"
 LOCAL_REPLAY_DIR = Path.home() / ".openra-rl" / "replays"
 MANIFEST_PATH = LOCAL_REPLAY_DIR / "manifest.json"
@@ -449,29 +451,29 @@ def copy_replays() -> list[str]:
     return new_files
 
 
-def is_replay_viewer_running() -> bool:
-    """Check if the replay viewer container is running."""
+def is_replay_viewer_running(container_name: str = REPLAY_CONTAINER) -> bool:
+    """Check if the named replay viewer container is running."""
     result = _run([
-        "docker", "ps", "--filter", f"name={REPLAY_CONTAINER}",
+        "docker", "ps", "--filter", f"name={container_name}",
         "--format", "{{.Names}}"
     ])
-    return REPLAY_CONTAINER in result.stdout
+    return container_name in result.stdout
 
 
-def replay_viewer_exists() -> bool:
-    """Check if the replay viewer container exists (running or exited)."""
+def replay_viewer_exists(container_name: str = REPLAY_CONTAINER) -> bool:
+    """Check if the named replay viewer container exists (running or exited)."""
     result = _run([
-        "docker", "ps", "-a", "--filter", f"name={REPLAY_CONTAINER}",
+        "docker", "ps", "-a", "--filter", f"name={container_name}",
         "--format", "{{.Names}}"
     ])
-    return REPLAY_CONTAINER in result.stdout
+    return container_name in result.stdout
 
 
-def get_replay_viewer_logs(tail: int = 200) -> str:
+def get_replay_viewer_logs(tail: int = 200, container_name: str = REPLAY_CONTAINER) -> str:
     """Return recent replay viewer logs, or empty string if unavailable."""
-    if not replay_viewer_exists():
+    if not replay_viewer_exists(container_name=container_name):
         return ""
-    result = _run(["docker", "logs", "--tail", str(tail), REPLAY_CONTAINER])
+    result = _run(["docker", "logs", "--tail", str(tail), container_name])
     if result.returncode != 0:
         return result.stderr.strip() or result.stdout.strip()
     return result.stdout.strip()
@@ -482,6 +484,7 @@ def start_replay_viewer(
     port: int = 6080,
     version: Optional[str] = None,
     settings: Optional[ReplayViewerSettings] = None,
+    container_name: str = REPLAY_CONTAINER,
 ) -> bool:
     """Start the replay viewer container.
 
@@ -494,13 +497,13 @@ def start_replay_viewer(
     if settings is None:
         settings = load_replay_viewer_settings()
 
-    if is_replay_viewer_running():
-        error("Replay viewer is already running. Stop it first with: openra-rl replay stop")
+    if is_replay_viewer_running(container_name=container_name):
+        error(f"Replay viewer '{container_name}' is already running.")
         return False
 
     # Clean up stale (exited) container if it exists
-    if replay_viewer_exists():
-        _run(["docker", "rm", "-f", REPLAY_CONTAINER])
+    if replay_viewer_exists(container_name=container_name):
+        _run(["docker", "rm", "-f", container_name])
 
     # Auto-detect version from manifest if not specified
     if version is None:
@@ -544,7 +547,7 @@ def start_replay_viewer(
     base_cmd = [
         "docker", "run", "-d",
         "-p", f"{port}:6080",
-        "--name", REPLAY_CONTAINER,
+        "--name", container_name,
         "--entrypoint", "/replay-viewer.sh",
     ]
     base_cmd.extend(_settings_env_args(settings))
@@ -580,21 +583,34 @@ def start_replay_viewer(
             return True
         last_stderr = result.stderr.strip()
         # Clean up the failed container before trying next variant
-        _run(["docker", "rm", "-f", REPLAY_CONTAINER])
+        _run(["docker", "rm", "-f", container_name])
 
     error(f"Failed to start replay viewer: {last_stderr}")
     return False
 
 
-def stop_replay_viewer() -> bool:
-    """Stop and remove the replay viewer container."""
-    if not replay_viewer_exists():
-        info("Replay viewer is not running.")
+def stop_replay_viewer(container_name: str = REPLAY_CONTAINER) -> bool:
+    """Stop and remove the named replay viewer container."""
+    if not replay_viewer_exists(container_name=container_name):
+        info(f"Replay viewer '{container_name}' is not running.")
         return True
     step("Stopping replay viewer...")
-    result = _run(["docker", "rm", "-f", REPLAY_CONTAINER])
+    result = _run(["docker", "rm", "-f", container_name])
     if result.returncode != 0:
         error(f"Failed to stop replay viewer: {result.stderr.strip()}")
         return False
     success("Replay viewer stopped.")
     return True
+
+
+def stop_compare_viewers() -> bool:
+    """Stop both arena compare replay viewers."""
+    ok = True
+    had_any = False
+    for container_name in (ARENA_LEFT_CONTAINER, ARENA_RIGHT_CONTAINER):
+        if replay_viewer_exists(container_name=container_name):
+            had_any = True
+            ok = stop_replay_viewer(container_name=container_name) and ok
+    if ok and not had_any:
+        info("Arena replay viewers are not running.")
+    return ok
