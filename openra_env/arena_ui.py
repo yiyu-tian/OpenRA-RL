@@ -177,6 +177,15 @@ nav {
   text-transform: uppercase;
 }
 .nav-links a:hover { color: #fff; }
+.nav-status {
+  font-family: 'Teko', sans-serif;
+  font-size: 1.05rem;
+  letter-spacing: .12em;
+  color: #9ca3af;
+  text-transform: uppercase;
+  border: 1px solid #3f3f46;
+  padding: .2rem .65rem;
+}
 .page {
   max-width: 90rem;
   margin: 0 auto;
@@ -489,12 +498,7 @@ def _arena_body() -> str:
       </svg>
       <span>OPENRA<span class="rl">-RL</span></span>
     </a>
-    <div class="nav-links">
-      <a href="https://openra-rl.dev">HOME</a>
-      <a href="https://openra-rl-openra-rl.hf.space/try">TRY</a>
-      <a href="https://openra-rl.dev/docs/getting-started">DOCS</a>
-      <a href="https://github.com/yxc20089/OpenRA-RL">GITHUB</a>
-    </div>
+    <div class="nav-status">Local Only</div>
   </div>
 </nav>
 
