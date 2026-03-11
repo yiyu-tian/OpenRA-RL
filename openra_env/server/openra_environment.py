@@ -2214,6 +2214,32 @@ class OpenRAEnvironment(MCPEnvironment):
                 return self._filter_living(parsed, living_ids)
             except ValueError:
                 pass
+        # Bare type name fallback: "dog", "e1", "e3", etc.
+        # Match against living unit types (case-insensitive)
+        selector_lower = selector.lower()
+        type_matches = [u["actor_id"] for u in obs.get("units", [])
+                        if u["type"].lower() == selector_lower]
+        if type_matches:
+            return type_matches
+        # Comma-separated type names: "dog,e1" or mixed "dog,119"
+        if "," in selector:
+            result = []
+            units = obs.get("units", [])
+            type_map = {u["type"].lower(): u["actor_id"] for u in units}
+            for token in selector.split(","):
+                token = token.strip()
+                if not token:
+                    continue
+                try:
+                    uid = int(token)
+                    if uid in living_ids:
+                        result.append(uid)
+                except ValueError:
+                    # Try as type name
+                    matches = [u["actor_id"] for u in units if u["type"].lower() == token.lower()]
+                    result.extend(matches)
+            if result:
+                return result
         return []
 
     def _filter_living(self, unit_ids: list[int], living_ids: set[int]) -> list[int]:
