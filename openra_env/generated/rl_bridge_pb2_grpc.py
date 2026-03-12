@@ -26,8 +26,9 @@ if _version_not_supported:
 
 
 class RLBridgeStub(object):
-    """The RL Bridge service allows an external agent to interact with OpenRA
-    via bidirectional streaming (lock-step) or unary state queries.
+    """The RL Bridge service allows an external agent to interact with OpenRA.
+    In multi-session mode, a single gRPC server hosts many concurrent game
+    sessions, each identified by a session_id.
     """
 
     def __init__(self, channel):
@@ -51,11 +52,22 @@ class RLBridgeStub(object):
                 request_serializer=rl__bridge__pb2.FastAdvanceRequest.SerializeToString,
                 response_deserializer=rl__bridge__pb2.GameObservation.FromString,
                 _registered_method=True)
+        self.CreateSession = channel.unary_unary(
+                '/openra.rl.RLBridge/CreateSession',
+                request_serializer=rl__bridge__pb2.CreateSessionRequest.SerializeToString,
+                response_deserializer=rl__bridge__pb2.CreateSessionResponse.FromString,
+                _registered_method=True)
+        self.DestroySession = channel.unary_unary(
+                '/openra.rl.RLBridge/DestroySession',
+                request_serializer=rl__bridge__pb2.DestroySessionRequest.SerializeToString,
+                response_deserializer=rl__bridge__pb2.DestroySessionResponse.FromString,
+                _registered_method=True)
 
 
 class RLBridgeServicer(object):
-    """The RL Bridge service allows an external agent to interact with OpenRA
-    via bidirectional streaming (lock-step) or unary state queries.
+    """The RL Bridge service allows an external agent to interact with OpenRA.
+    In multi-session mode, a single gRPC server hosts many concurrent game
+    sessions, each identified by a session_id.
     """
 
     def GameSession(self, request_iterator, context):
@@ -81,6 +93,19 @@ class RLBridgeServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def CreateSession(self, request, context):
+        """Session management (multi-session mode)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DestroySession(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_RLBridgeServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -99,6 +124,16 @@ def add_RLBridgeServicer_to_server(servicer, server):
                     request_deserializer=rl__bridge__pb2.FastAdvanceRequest.FromString,
                     response_serializer=rl__bridge__pb2.GameObservation.SerializeToString,
             ),
+            'CreateSession': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateSession,
+                    request_deserializer=rl__bridge__pb2.CreateSessionRequest.FromString,
+                    response_serializer=rl__bridge__pb2.CreateSessionResponse.SerializeToString,
+            ),
+            'DestroySession': grpc.unary_unary_rpc_method_handler(
+                    servicer.DestroySession,
+                    request_deserializer=rl__bridge__pb2.DestroySessionRequest.FromString,
+                    response_serializer=rl__bridge__pb2.DestroySessionResponse.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'openra.rl.RLBridge', rpc_method_handlers)
@@ -108,8 +143,9 @@ def add_RLBridgeServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class RLBridge(object):
-    """The RL Bridge service allows an external agent to interact with OpenRA
-    via bidirectional streaming (lock-step) or unary state queries.
+    """The RL Bridge service allows an external agent to interact with OpenRA.
+    In multi-session mode, a single gRPC server hosts many concurrent game
+    sessions, each identified by a session_id.
     """
 
     @staticmethod
@@ -183,6 +219,60 @@ class RLBridge(object):
             '/openra.rl.RLBridge/FastAdvance',
             rl__bridge__pb2.FastAdvanceRequest.SerializeToString,
             rl__bridge__pb2.GameObservation.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateSession(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openra.rl.RLBridge/CreateSession',
+            rl__bridge__pb2.CreateSessionRequest.SerializeToString,
+            rl__bridge__pb2.CreateSessionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DestroySession(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openra.rl.RLBridge/DestroySession',
+            rl__bridge__pb2.DestroySessionRequest.SerializeToString,
+            rl__bridge__pb2.DestroySessionResponse.FromString,
             options,
             channel_credentials,
             insecure,

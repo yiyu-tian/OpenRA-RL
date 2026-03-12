@@ -2,6 +2,10 @@
 
 Handles launching, monitoring, and terminating OpenRA game instances
 for RL training episodes.
+
+Supports two modes:
+  - Single-session (legacy): One process per game session, killed on reset
+  - Multi-session (daemon): One long-lived process hosts many game sessions via gRPC
 """
 
 import logging
@@ -45,6 +49,7 @@ class OpenRAConfig:
     seed: Optional[int] = None
     headless: bool = True  # Use Null renderer (no GPU needed)
     record_replays: bool = False  # Enable .orarep replay recording
+    multi_session: bool = False  # Multi-session daemon mode
     extra_args: dict = field(default_factory=dict)
 
 
@@ -94,6 +99,7 @@ class OpenRAProcessManager:
 
         Uses the game client (OpenRA.dll) with Launch.Map and Launch.Bots
         to auto-start a local game with the RL bot and optional AI opponent.
+        In multi-session mode, uses Launch.MultiSession instead.
         """
         openra_path = Path(self.config.openra_path)
 
@@ -116,20 +122,29 @@ class OpenRAProcessManager:
                     "Expected OpenRA.dll in root or bin/, or launch-rl.sh"
                 )
 
-        # Build bots configuration: slot:bottype,slot:bottype
-        bots = f"{self.config.rl_slot}:rl-agent"
-        if self.config.ai_slot:
-            # Map difficulty tiers to OpenRA bot types
-            actual_type = BOT_TYPE_MAP.get(self.config.bot_type, self.config.bot_type)
-            bots += f",{self.config.ai_slot}:{actual_type}"
-
         args = [
             *exe,
             f"Engine.EngineDir={self.config.openra_path}",
             f"Game.Mod={self.config.mod}",
-            f"Launch.Map={self.config.map_name}",
-            f"Launch.Bots={bots}",
         ]
+
+        if self.config.multi_session:
+            # Multi-session daemon mode: no map/bots at launch time,
+            # sessions are created via gRPC CreateSession RPC
+            args.append(f"Launch.MultiSession={self.config.grpc_port}")
+        else:
+            # Single-session mode: start a specific map with bots
+            # Build bots configuration: slot:bottype,slot:bottype
+            bots = f"{self.config.rl_slot}:rl-agent"
+            if self.config.ai_slot:
+                # Map difficulty tiers to OpenRA bot types
+                actual_type = BOT_TYPE_MAP.get(self.config.bot_type, self.config.bot_type)
+                bots += f",{self.config.ai_slot}:{actual_type}"
+
+            args.extend([
+                f"Launch.Map={self.config.map_name}",
+                f"Launch.Bots={bots}",
+            ])
 
         # Use Null renderer for headless operation (no GPU/OpenGL needed)
         if self.config.headless:

@@ -199,6 +199,8 @@ class OpenRAEnvironment(MCPEnvironment):
         planning_max_turns: int = 10,
         planning_max_time_s: float = 60.0,
         config: Optional[OpenRARLConfig] = None,
+        multi_session: bool = False,
+        shared_channel: Optional[Any] = None,
     ):
         # ── Load unified config ──────────────────────────────────────
         if config is not None:
@@ -244,6 +246,8 @@ class OpenRAEnvironment(MCPEnvironment):
         self._register_tools(mcp)
         super().__init__(mcp)
 
+        self._multi_session = multi_session
+        self._shared_channel = shared_channel
         self._config = OpenRAConfig(
             openra_path=cfg.game.openra_path,
             mod=cfg.game.mod,
@@ -255,8 +259,14 @@ class OpenRAEnvironment(MCPEnvironment):
             headless=cfg.game.headless,
             seed=cfg.game.seed,
         )
-        self._process = OpenRAProcessManager(self._config)
-        self._bridge = BridgeClient(port=cfg.game.grpc_port)
+        if not multi_session:
+            self._process = OpenRAProcessManager(self._config)
+        else:
+            self._process = None  # Daemon managed externally
+        self._bridge = BridgeClient(
+            port=cfg.game.grpc_port,
+            shared_channel=shared_channel,
+        )
         rw = RewardWeights(
             survival=cfg.reward.survival,
             economic_efficiency=cfg.reward.economic_efficiency,
@@ -2187,6 +2197,8 @@ class OpenRAEnvironment(MCPEnvironment):
         if not isinstance(selector, str):
             return []
         selector = selector.strip()
+        if selector == "all":
+            return [u["actor_id"] for u in obs.get("units", [])]
         if selector == "all_combat":
             return [u["actor_id"] for u in obs.get("units", []) if u.get("can_attack")]
         if selector == "all_idle":
@@ -2836,8 +2848,11 @@ class OpenRAEnvironment(MCPEnvironment):
     ) -> OpenRAObservation:
         """Reset the environment for a new episode."""
         # Clean up previous episode
-        self._bridge.close()
-        self._process.kill()
+        if self._multi_session:
+            self._bridge.destroy_session()
+        else:
+            self._bridge.close()
+            self._process.kill()
 
         # Initialize new episode state
         ep_id = episode_id or str(uuid.uuid4())
@@ -2885,20 +2900,42 @@ class OpenRAEnvironment(MCPEnvironment):
             self._config.map_name = map_name
             self._state.map_name = map_name
 
-        # Launch OpenRA — serialized via semaphore to prevent CPU starvation
-        # when multiple sessions reset simultaneously (JIT compilation is heavy).
-        logger.info(f"Launching OpenRA: map={self._config.map_name}, mod={self._config.mod}")
-        with self._launch_semaphore:
-            self._process.launch()
-            logger.info(f"OpenRA process launched (PID={self._process.pid})")
+        if self._multi_session:
+            # Multi-session mode: create a new session on the shared daemon.
+            # No process launch needed — the daemon is already running.
+            from openra_env.server.openra_process import BOT_TYPE_MAP
+            logger.info(f"Creating session: map={self._config.map_name}")
+            self._bridge.connect()
+            actual_bot_type = BOT_TYPE_MAP.get(self._config.bot_type, self._config.bot_type)
+            bots = f"Multi1:rl-agent,{self._config.ai_slot}:{actual_bot_type}"
+            session_id = self._bridge.create_session(
+                map_name=self._config.map_name,
+                bots=bots,
+                seed=self._config.seed or 0,
+            )
+            logger.info(f"Session created: {session_id}")
 
-            # Wait for gRPC server to be ready (still under semaphore so the
-            # next launch doesn't start until this game's gRPC is responsive)
-            logger.info("Waiting for gRPC bridge to become ready...")
-            ready = self._bridge.wait_for_ready(max_retries=120, retry_interval=2.0)
+            # Wait for session to be ready (game world created and paused)
+            ready = self._bridge.wait_for_ready(max_retries=60, retry_interval=0.5)
+        else:
+            # Single-session mode: launch a new OpenRA process.
+            # Serialized via semaphore to prevent CPU starvation from JIT.
+            logger.info(f"Launching OpenRA: map={self._config.map_name}, mod={self._config.mod}")
+            with self._launch_semaphore:
+                self._process.launch()
+                logger.info(f"OpenRA process launched (PID={self._process.pid})")
+
+                # Wait for gRPC server to be ready (still under semaphore so the
+                # next launch doesn't start until this game's gRPC is responsive)
+                logger.info("Waiting for gRPC bridge to become ready...")
+                ready = self._bridge.wait_for_ready(max_retries=120, retry_interval=2.0)
+
         if not ready:
-            alive = self._process.is_alive()
-            logger.error(f"Bridge failed to start. Process alive={alive}")
+            if self._multi_session:
+                logger.error("Session failed to become ready")
+            else:
+                alive = self._process.is_alive()
+                logger.error(f"Bridge failed to start. Process alive={alive}")
             raise RuntimeError("OpenRA gRPC bridge failed to start")
 
         # Get faction info from GameState (unary RPC — game stays paused)
@@ -2972,19 +3009,27 @@ class OpenRAEnvironment(MCPEnvironment):
 
     def close(self) -> None:
         """Clean up resources."""
-        try:
-            self._bridge.close()
-        except Exception:
-            pass
-        self._process.kill()
-        # Return port to the pool so it can be reused by new sessions
-        pool_ref = getattr(self, "_port_pool_ref", None)
-        if pool_ref is not None:
-            pool, lock, port = pool_ref
-            with lock:
-                if port not in pool:
-                    pool.append(port)
-            self._port_pool_ref = None
+        if self._multi_session:
+            try:
+                self._bridge.destroy_session()
+            except Exception:
+                pass
+            # Don't close bridge — shared channel is managed by the caller
+        else:
+            try:
+                self._bridge.close()
+            except Exception:
+                pass
+            if self._process is not None:
+                self._process.kill()
+            # Return port to the pool so it can be reused by new sessions
+            pool_ref = getattr(self, "_port_pool_ref", None)
+            if pool_ref is not None:
+                pool, lock, port = pool_ref
+                with lock:
+                    if port not in pool:
+                        pool.append(port)
+                self._port_pool_ref = None
 
     def __del__(self):
         try:

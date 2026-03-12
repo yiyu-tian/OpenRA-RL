@@ -7,6 +7,7 @@ so sync gRPC calls naturally block that thread without affecting others.
 Protocol:
   - Unary RPC (FastAdvance): send commands + advance N ticks, get observation back
   - Unary RPC (GetState): query current game state on demand
+  - Unary RPC (CreateSession/DestroySession): session lifecycle (multi-session mode)
 """
 
 import base64
@@ -24,33 +25,44 @@ logger = logging.getLogger(__name__)
 class BridgeClient:
     """Synchronous gRPC client for the OpenRA RL Bridge.
 
-    Uses unary RPCs only (FastAdvance, GetState). No streaming, no async,
-    no shared poller — scales to hundreds of concurrent connections.
+    Uses unary RPCs only (FastAdvance, GetState, CreateSession, DestroySession).
+    No streaming, no async, no shared poller — scales to hundreds of concurrent connections.
+
+    In multi-session mode, a single gRPC channel is shared across all environments.
+    Each environment uses its own session_id to route RPCs to the correct game session.
     """
 
-    def __init__(self, host: str = "localhost", port: int = 9999, timeout_s: float = 30.0):
+    def __init__(self, host: str = "localhost", port: int = 9999, timeout_s: float = 30.0,
+                 session_id: str = "", shared_channel: Optional[grpc.Channel] = None):
         self.host = host
         self.port = port
         self.timeout_s = timeout_s
+        self.session_id = session_id
+        self._shared_channel = shared_channel
         self._channel: Optional[grpc.Channel] = None
         self._stub: Optional[rl_bridge_pb2_grpc.RLBridgeStub] = None
         self._connected = False
 
     def connect(self) -> None:
         """Establish gRPC channel."""
-        target = f"{self.host}:{self.port}"
-        self._channel = grpc.insecure_channel(
-            target,
-            options=[
-                ("grpc.max_receive_message_length", 64 * 1024 * 1024),
-                ("grpc.max_send_message_length", 16 * 1024 * 1024),
-                ("grpc.keepalive_time_ms", 10000),
-                ("grpc.keepalive_timeout_ms", 5000),
-            ],
-        )
+        if self._shared_channel is not None:
+            # Multi-session mode: use shared channel
+            self._channel = self._shared_channel
+        else:
+            # Single-session mode: create own channel
+            target = f"{self.host}:{self.port}"
+            self._channel = grpc.insecure_channel(
+                target,
+                options=[
+                    ("grpc.max_receive_message_length", 64 * 1024 * 1024),
+                    ("grpc.max_send_message_length", 16 * 1024 * 1024),
+                    ("grpc.keepalive_time_ms", 10000),
+                    ("grpc.keepalive_timeout_ms", 5000),
+                ],
+            )
         self._stub = rl_bridge_pb2_grpc.RLBridgeStub(self._channel)
         self._connected = True
-        logger.info(f"Connected to OpenRA bridge at {target}")
+        logger.info(f"Connected to OpenRA bridge at {self.host}:{self.port}")
 
     def wait_for_ready(self, max_retries: int = 30, retry_interval: float = 1.0) -> bool:
         """Wait for the gRPC server to become available."""
@@ -93,7 +105,7 @@ class BridgeClient:
         if not self._connected:
             self.connect()
 
-        request = rl_bridge_pb2.FastAdvanceRequest(ticks=ticks)
+        request = rl_bridge_pb2.FastAdvanceRequest(ticks=ticks, session_id=self.session_id)
         if commands:
             request.commands.extend(commands)
 
@@ -103,12 +115,50 @@ class BridgeClient:
         """Query current game state via unary RPC."""
         if not self._connected or self._stub is None:
             raise RuntimeError("Not connected. Call connect() first.")
-        request = rl_bridge_pb2.StateRequest()
+        request = rl_bridge_pb2.StateRequest(session_id=self.session_id)
         return self._stub.GetState(request, timeout=self.timeout_s)
+
+    def create_session(self, map_name: str, bots: str, seed: int = 0) -> str:
+        """Create a new game session (multi-session mode).
+
+        Returns the session_id assigned by the server.
+        """
+        if not self._connected or self._stub is None:
+            self.connect()
+
+        request = rl_bridge_pb2.CreateSessionRequest(
+            map_name=map_name,
+            bots=bots,
+            seed=seed,
+        )
+        response = self._stub.CreateSession(request, timeout=60.0)
+        self.session_id = response.session_id
+        logger.info(f"Created session {self.session_id} (map={map_name})")
+        return response.session_id
+
+    def destroy_session(self, session_id: str = "") -> None:
+        """Destroy a game session (multi-session mode)."""
+        if not self._connected or self._stub is None:
+            return
+
+        sid = session_id or self.session_id
+        if not sid:
+            return
+
+        try:
+            request = rl_bridge_pb2.DestroySessionRequest(session_id=sid)
+            self._stub.DestroySession(request, timeout=30.0)
+            logger.info(f"Destroyed session {sid}")
+        except grpc.RpcError as e:
+            logger.warning(f"Failed to destroy session {sid}: {e.code()}")
+
+        if sid == self.session_id:
+            self.session_id = ""
 
     def close(self) -> None:
         """Close the gRPC channel."""
-        if self._channel is not None:
+        # Don't close shared channels — they're managed by the caller
+        if self._channel is not None and self._shared_channel is None:
             self._channel.close()
             self._channel = None
 
