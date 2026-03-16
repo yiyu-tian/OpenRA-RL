@@ -2938,15 +2938,25 @@ class OpenRAEnvironment(MCPEnvironment):
                 logger.error(f"Bridge failed to start. Process alive={alive}")
             raise RuntimeError("OpenRA gRPC bridge failed to start")
 
-        # Get faction info from GameState (unary RPC — game stays paused)
+        # Get faction info from GameState (unary RPC — game stays paused).
+        # This also serves as a session health check — if get_state() fails,
+        # the session is broken and should not be used.
         game_state = None
         try:
             game_state = self._bridge.get_state()
             self._player_faction = game_state.player_faction or ""
             self._enemy_faction = game_state.enemy_faction or ""
-        except Exception:
-            self._player_faction = ""
-            self._enemy_faction = ""
+        except Exception as e:
+            raise RuntimeError(
+                f"Session health check failed: get_state() error: {e}. "
+                f"The .NET session likely failed to initialize."
+            ) from e
+
+        if game_state is None or not hasattr(game_state, 'tick'):
+            raise RuntimeError(
+                "Session health check failed: get_state() returned None. "
+                "The .NET session is in a degenerate state."
+            )
 
         # Build a minimal initial observation WITHOUT starting the streaming
         # session. The game stays paused until _ensure_session_started() is
