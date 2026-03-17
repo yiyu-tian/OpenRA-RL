@@ -17,7 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # upstream, so GH200 can stay on the remote bleed branch and use SKIP_PROTOC.
 ARG OPENRA_REPO=https://github.com/yxc20089/OpenRA.git
 ARG OPENRA_BRANCH=bleed
-RUN git clone --depth=1 --branch "$OPENRA_BRANCH" "$OPENRA_REPO" /src/openra
+ARG OPENRA_CACHE_BUST=0
+RUN echo "OpenRA cache bust: $OPENRA_CACHE_BUST" && \
+    git clone --depth=1 --branch "$OPENRA_BRANCH" "$OPENRA_REPO" /src/openra
 WORKDIR /src/openra
 
 # Fix Windows CRLF line endings in shell scripts (git autocrlf on Windows adds \r)
