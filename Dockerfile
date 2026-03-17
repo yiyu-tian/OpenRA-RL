@@ -24,9 +24,9 @@ WORKDIR /src/openra
 RUN find . -name '*.sh' -exec sed -i 's/\r$//' {} + && \
     find . -name '*.sh' -exec chmod +x {} +
 
-# Build with system libraries (unix-generic avoids bundled native binaries)
-# SKIP_PROTOC=true uses pre-generated protobuf C# files (avoids protoc arm64 crash in Docker)
-ENV SKIP_PROTOC=true
+# Build with system libraries (unix-generic avoids bundled native binaries).
+# Do not set SKIP_PROTOC here: the checked-in generated RL bridge files can lag
+# behind rl_bridge.proto, so we regenerate them during the Docker build.
 RUN make TARGETPLATFORM=unix-generic CONFIGURATION=Release
 
 # Verify critical output (includes Null platform for headless RL operation)
