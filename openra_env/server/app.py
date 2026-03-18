@@ -66,7 +66,24 @@ def _env_factory():
 
 
 # Launch daemon on first import (idempotent — checks if already running)
+# Fail fast if port is already in use (stale daemon from crashed process)
+import socket as _socket
+def _check_port_free(port: int) -> None:
+    with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("", port))
+        except OSError as e:
+            import subprocess
+            holder = subprocess.run(
+                ["lsof", "-ti", f":{port}"], capture_output=True, text=True
+            ).stdout.strip()
+            raise RuntimeError(
+                f"Port {port} already in use (PIDs: {holder or 'unknown'}). "
+                f"Kill stale processes: kill -9 {holder}"
+            ) from e
+
 if not _daemon.is_alive():
+    _check_port_free(_base_grpc_port)
     _daemon.launch()
     print(f"Game daemon launched on port {_base_grpc_port}")
 
