@@ -2911,12 +2911,9 @@ class OpenRAEnvironment(MCPEnvironment):
             logger.info(f"Creating session: map={self._config.map_name}")
             self._bridge.connect()
             actual_bot_type = BOT_TYPE_MAP.get(self._config.bot_type, self._config.bot_type)
-            if actual_bot_type:
-                bots = f"Multi1:rl-agent,{self._config.ai_slot}:{actual_bot_type}"
-            else:
-                # No AI bot — enemy player exists but has no bot controller
-                # (passive buildings only, no unit production or attacks)
-                bots = "Multi1:rl-agent"
+            # Always include enemy player slot so buildings have an owner.
+            # Empty bot type = player exists with no AI controller (passive buildings).
+            bots = f"Multi1:rl-agent,{self._config.ai_slot}:{actual_bot_type}"
             session_id = self._bridge.create_session(
                 map_name=self._config.map_name,
                 bots=bots,
