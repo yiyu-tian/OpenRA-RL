@@ -1397,11 +1397,28 @@ class OpenRAEnvironment(MCPEnvironment):
             game time to progress — nothing happens without calling advance().
             Also triggers auto-placement of buildings queued via build_and_place().
             Typical build times: power plant ~300 ticks, barracks ~500 ticks,
-            war factory ~750 ticks. Returns updated game summary."""
+            war factory ~750 ticks. Returns updated game summary.
+
+            Server-side interrupt detection (optional):
+                check_events_every: Check for interrupts every N ticks (0=disabled).
+                enabled_interrupts: Signal names to check, e.g. ["enemy_spotted", "building_discovered"].
+                If an interrupt fires, advance ends early with 'interrupted' and 'interrupt_reason' in result."""
             requested = ticks
             ticks = max(1, min(ticks, 5000))  # clamp to [1, 5000]
             try:
-                proto_obs = env._bridge.fast_advance_unary(ticks)
+                # Always enable server-side interrupt detection (25 tick interval).
+                # The C# side checks all standard signals and returns early if
+                # one fires. Eliminates Python-side event polling loop.
+                _DEFAULT_INTERRUPTS = [
+                    "game_over", "enemy_spotted", "unit_destroyed", "under_attack",
+                    "building_discovered", "enemy_building_destroyed",
+                    "own_building_destroyed", "exploration_milestone",
+                ]
+                proto_obs = env._bridge.fast_advance_unary(
+                    ticks,
+                    check_events_every=25,
+                    enabled_interrupts=_DEFAULT_INTERRUPTS,
+                )
                 obs_dict = observation_to_dict(proto_obs)
                 env._last_obs = obs_dict
             except Exception:

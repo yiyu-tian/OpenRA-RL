@@ -96,11 +96,21 @@ class BridgeClient:
         """Always False — no streaming session in sync mode."""
         return False
 
-    def fast_advance_unary(self, ticks: int, commands=None) -> rl_bridge_pb2.GameObservation:
+    def fast_advance_unary(
+        self, ticks: int, commands=None,
+        check_events_every: int = 0,
+        enabled_interrupts: list[str] | None = None,
+    ) -> rl_bridge_pb2.GameObservation:
         """Advance N ticks via unary RPC.
 
         Works reliably on all platforms including aarch64 where
         gRPC bidirectional streaming has transport issues.
+
+        Args:
+            ticks: Number of game ticks to advance.
+            commands: Optional list of proto Command objects.
+            check_events_every: Check interrupt signals every N ticks (0=disabled).
+            enabled_interrupts: Signal names to check (e.g. ["enemy_spotted"]).
         """
         if not self._connected:
             self.connect()
@@ -108,6 +118,10 @@ class BridgeClient:
         request = rl_bridge_pb2.FastAdvanceRequest(ticks=ticks, session_id=self.session_id)
         if commands:
             request.commands.extend(commands)
+        if check_events_every > 0:
+            request.check_events_every = check_events_every
+        if enabled_interrupts:
+            request.enabled_interrupts.extend(enabled_interrupts)
 
         return self._stub.FastAdvance(request, timeout=300.0)
 
@@ -311,6 +325,10 @@ def observation_to_dict(obs: rl_bridge_pb2.GameObservation) -> dict:
         "spatial_map": base64.b64encode(bytes(obs.spatial_map)).decode("ascii"),
         "spatial_channels": obs.spatial_channels,
         "explored_percent": obs.explored_percent,
+        # Server-side interrupt detection fields
+        "interrupted": obs.interrupted,
+        "interrupt_reason": obs.interrupt_reason,
+        "actual_ticks_advanced": obs.actual_ticks_advanced,
     }
 
 
