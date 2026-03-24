@@ -36,6 +36,8 @@ BOT_TYPE_MAP: dict[str, str] = {
     "medium": "medium",
     "hard": "normal",
     "brutal": "rush",
+    "dummy": "dummy",
+    "": "dummy",
 }
 
 
