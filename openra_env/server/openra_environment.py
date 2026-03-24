@@ -2286,7 +2286,7 @@ class OpenRAEnvironment(MCPEnvironment):
         if "," in selector:
             result = []
             units = obs.get("units", [])
-            type_map = {u["type"].lower(): u["actor_id"] for u in units}
+            _type_map = {u["type"].lower(): u["actor_id"] for u in units}  # noqa: F841
             for token in selector.split(","):
                 token = token.strip()
                 if not token:
