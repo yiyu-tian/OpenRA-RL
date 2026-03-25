@@ -1406,13 +1406,13 @@ class OpenRAEnvironment(MCPEnvironment):
             requested = ticks
             ticks = max(1, min(ticks, 5000))  # clamp to [1, 5000]
             try:
-                # Always enable server-side interrupt detection (25 tick interval).
-                # The C# side checks all standard signals and returns early if
-                # one fires. Eliminates Python-side event polling loop.
+                # Server-side interrupt detection: check every 25 ticks.
+                # AllCells LINQ removed from CheckInterrupts(), only runs once
+                # in Tick completion (acceptable overhead).
                 _DEFAULT_INTERRUPTS = [
                     "game_over", "enemy_spotted", "unit_destroyed", "under_attack",
                     "building_discovered", "enemy_building_destroyed",
-                    "own_building_destroyed", "exploration_milestone",
+                    "own_building_destroyed",
                 ]
                 proto_obs = env._bridge.fast_advance_unary(
                     ticks,
