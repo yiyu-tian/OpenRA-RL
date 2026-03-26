@@ -107,12 +107,18 @@ class OpenRAMCPClient:
         await self.close()
 
     async def _send_recv(self, message: dict) -> dict:
-        """Send a message and wait for response."""
+        """Send a message and wait for response.
+
+        No asyncio.wait_for — it cancels the recv task on timeout, which
+        kills the WebSocket connection and cascades failures to all episodes
+        sharing this worker connection. The WebSocket library handles
+        disconnects natively (raises ConnectionClosed).
+        """
         if self._ws is None:
             raise RuntimeError("Not connected. Call connect() first.")
 
         await self._ws.send(json.dumps(message))
-        raw = await asyncio.wait_for(self._ws.recv(), timeout=self._timeout)
+        raw = await self._ws.recv()
         return json.loads(raw)
 
     # ── Environment Control ───────────────────────────────────────
