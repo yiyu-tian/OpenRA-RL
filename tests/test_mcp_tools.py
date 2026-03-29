@@ -4246,6 +4246,30 @@ class TestActorValidation:
                     "experience_level": 0, "stance": 3, "speed": 40,
                     "attack_range": 0, "passenger_count": -1, "is_building": False,
                 },
+                {
+                    "actor_id": 30, "type": "apc", "pos_x": 1100, "pos_y": 2100,
+                    "cell_x": 11, "cell_y": 21, "hp_percent": 1.0,
+                    "is_idle": True, "current_activity": "",
+                    "owner": "Multi0", "can_attack": True, "facing": 0,
+                    "experience_level": 0, "stance": 3, "speed": 80,
+                    "attack_range": 5, "passenger_count": 0, "is_building": False,
+                },
+                {
+                    "actor_id": 31, "type": "e1", "pos_x": 1050, "pos_y": 2050,
+                    "cell_x": 10, "cell_y": 20, "hp_percent": 1.0,
+                    "is_idle": True, "current_activity": "",
+                    "owner": "Multi0", "can_attack": True, "facing": 0,
+                    "experience_level": 0, "stance": 3, "speed": 28,
+                    "attack_range": 5, "passenger_count": -1, "is_building": False,
+                },
+                {
+                    "actor_id": 32, "type": "e3", "pos_x": 1060, "pos_y": 2060,
+                    "cell_x": 10, "cell_y": 20, "hp_percent": 1.0,
+                    "is_idle": True, "current_activity": "",
+                    "owner": "Multi0", "can_attack": True, "facing": 0,
+                    "experience_level": 0, "stance": 3, "speed": 28,
+                    "attack_range": 7, "passenger_count": -1, "is_building": False,
+                },
             ],
             "buildings": [
                 {
@@ -4415,6 +4439,71 @@ class TestActorValidation:
         env._execute_commands = lambda cmds: {"tick": 501, "done": False, "result": ""}
         tool = mcp._tool_manager._tools["cancel_production"]
         result = tool.fn(item_type="E1")
+        assert "error" not in result
+
+    # ── load_transport ──
+
+    def test_load_transport_rejects_missing_transport(self, env_with_actors):
+        env, mcp = env_with_actors
+        tool = mcp._tool_manager._tools["load_transport"]
+        result = tool.fn(unit_ids="31", transport_id=999)
+        assert "error" in result
+        assert "999" in result["error"]
+
+    def test_load_transport_rejects_no_matching_units(self, env_with_actors):
+        env, mcp = env_with_actors
+        tool = mcp._tool_manager._tools["load_transport"]
+        result = tool.fn(unit_ids="999", transport_id=30)
+        assert "error" in result
+        assert "No matching units" in result["error"]
+
+    def test_load_transport_rejects_self_load(self, env_with_actors):
+        env, mcp = env_with_actors
+        tool = mcp._tool_manager._tools["load_transport"]
+        result = tool.fn(unit_ids="30", transport_id=30)
+        assert "error" in result
+        assert "cannot load itself" in result["error"]
+
+    def test_load_transport_accepts_valid(self, env_with_actors):
+        env, mcp = env_with_actors
+        env._execute_commands = lambda cmds: {"tick": 501, "done": False, "result": ""}
+        tool = mcp._tool_manager._tools["load_transport"]
+        result = tool.fn(unit_ids="31,32", transport_id=30)
+        assert "error" not in result
+
+    def test_load_transport_single_unit(self, env_with_actors):
+        env, mcp = env_with_actors
+        env._execute_commands = lambda cmds: {"tick": 501, "done": False, "result": ""}
+        tool = mcp._tool_manager._tools["load_transport"]
+        result = tool.fn(unit_ids="31", transport_id=30)
+        assert "error" not in result
+
+    # ── unload_transport ──
+
+    def test_unload_transport_rejects_missing_transport(self, env_with_actors):
+        env, mcp = env_with_actors
+        tool = mcp._tool_manager._tools["unload_transport"]
+        result = tool.fn(transport_id=999)
+        assert "error" in result
+        assert "999" in result["error"]
+
+    def test_unload_transport_rejects_empty_transport(self, env_with_actors):
+        env, mcp = env_with_actors
+        tool = mcp._tool_manager._tools["unload_transport"]
+        result = tool.fn(transport_id=30)  # passenger_count=0
+        assert "error" in result
+        assert "no passengers" in result["error"]
+
+    def test_unload_transport_accepts_loaded(self, env_with_actors):
+        env, mcp = env_with_actors
+        # Simulate a loaded APC
+        for u in env._last_obs["units"]:
+            if u["actor_id"] == 30:
+                u["passenger_count"] = 2
+                break
+        env._execute_commands = lambda cmds: {"tick": 501, "done": False, "result": ""}
+        tool = mcp._tool_manager._tools["unload_transport"]
+        result = tool.fn(transport_id=30)
         assert "error" not in result
 
 
