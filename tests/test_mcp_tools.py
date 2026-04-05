@@ -4693,7 +4693,7 @@ class TestActionToCommandsValidation:
 
     def test_load_transport_valid_returns_commands(self, env_for_batch):
         env = env_for_batch
-        obs = {"units": [{"actor_id": 30, "type": "apc"}, {"actor_id": 31, "type": "e1"}, {"actor_id": 32, "type": "e3"}], "buildings": [], "production": []}
+        obs = {"units": [{"actor_id": 30, "type": "apc", "passenger_count": 0}, {"actor_id": 31, "type": "e1"}, {"actor_id": 32, "type": "e3"}], "buildings": [], "production": []}
         result = env._action_to_commands({"tool": "load_transport", "unit_ids": "31,32", "transport_id": 30}, obs)
         assert len(result) == 2
         assert all(c.action == ActionType.ENTER_TRANSPORT for c in result)
@@ -4709,7 +4709,7 @@ class TestActionToCommandsValidation:
 
     def test_unload_transport_valid_returns_command(self, env_for_batch):
         env = env_for_batch
-        obs = {"units": [{"actor_id": 30, "type": "apc"}], "buildings": [], "production": []}
+        obs = {"units": [{"actor_id": 30, "type": "apc", "passenger_count": 2}], "buildings": [], "production": []}
         result = env._action_to_commands({"tool": "unload_transport", "transport_id": 30}, obs)
         assert len(result) == 1
         assert result[0].action == ActionType.UNLOAD
